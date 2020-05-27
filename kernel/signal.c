@@ -97,12 +97,37 @@ void deliver_signal(struct task *task, int sig, struct siginfo_ info) {
     unlock(&task->sighand->lock);
 }
 
+void signal_delivery_stop(struct task *task, int sig, struct siginfo_ info) {
+    lock(&task->ptrace.lock);
+    task->ptrace.stopped = true;
+    task->ptrace.signal = sig;
+    task->ptrace.info = info;
+    unlock(&task->ptrace.lock);
+    notify(&current->parent->group->child_exit);
+    // TODO add siginfo
+    send_signal(current->parent, current->group->leader->exit_signal, SIGINFO_NIL);
+    unlock(&pids_lock);
+
+    lock(&current->ptrace.lock);
+    while (current->ptrace.stopped) {
+        if (wait_for(&current->ptrace.cond, &current->ptrace.lock, NULL) == _EINTR)
+            receive_signals();
+    }
+    unlock(&current->ptrace.lock);
+    lock(&pids_lock);
+}
+
 void send_signal(struct task *task, int sig, struct siginfo_ info) {
     // signal zero is for testing whether a process exists
     if (sig == 0)
         return;
     if (task->zombie)
         return;
+
+    if (task->ptrace.traced && sig != SIGKILL_) {
+        signal_delivery_stop(task, sig, info);
+        return;
+    }
 
     struct sighand *sighand = task->sighand;
     lock(&sighand->lock);
