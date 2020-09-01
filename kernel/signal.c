@@ -97,24 +97,25 @@ void deliver_signal(struct task *task, int sig, struct siginfo_ info) {
     unlock(&task->sighand->lock);
 }
 
-void signal_delivery_stop(struct task *task, int sig, struct siginfo_ info) {
+void signal_delivery_stop(struct task *task, int sig, struct siginfo_ *info) {
     lock(&task->ptrace.lock);
     task->ptrace.stopped = true;
     task->ptrace.signal = sig;
-    task->ptrace.info = info;
+    task->ptrace.info = *info;
     unlock(&task->ptrace.lock);
     notify(&current->parent->group->child_exit);
     // TODO add siginfo
     send_signal(current->parent, current->group->leader->exit_signal, SIGINFO_NIL);
-    unlock(&pids_lock);
 
+    unlock(&task->sighand->lock);
     lock(&current->ptrace.lock);
     while (current->ptrace.stopped) {
+        // wait_for_ignore_signals(&current->ptrace.cond, &current->ptrace.lock, NULL);
         if (wait_for(&current->ptrace.cond, &current->ptrace.lock, NULL) == _EINTR)
             receive_signals();
     }
     unlock(&current->ptrace.lock);
-    lock(&pids_lock);
+    lock(&task->sighand->lock);
 }
 
 void send_signal(struct task *task, int sig, struct siginfo_ info) {
@@ -123,11 +124,6 @@ void send_signal(struct task *task, int sig, struct siginfo_ info) {
         return;
     if (task->zombie)
         return;
-
-    if (task->ptrace.traced && sig != SIGKILL_) {
-        signal_delivery_stop(task, sig, info);
-        return;
-    }
 
     struct sighand *sighand = task->sighand;
     lock(&sighand->lock);
@@ -244,6 +240,11 @@ static void receive_signal(struct sighand *sighand, struct siginfo_ *info) {
     int sig = info->sig;
     STRACE("%d receiving signal %d\n", current->pid, sig);
     sigset_del(&current->pending, sig);
+
+    if (current->ptrace.traced && sig != SIGKILL_) {
+        signal_delivery_stop(current, sig, info);
+        return;
+    }
 
     switch (signal_action(sighand, sig)) {
         case SIGNAL_IGNORE:

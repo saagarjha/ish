@@ -176,7 +176,6 @@ dword_t sys_clone(dword_t flags, addr_t stack, addr_t ptid, addr_t tls, addr_t c
 
     if (current->ptrace.traced) {
         current->ptrace.trap_event = PTRACE_EVENT_FORK_;
-        lock(&pids_lock);
         send_signal(current, SIGTRAP_, SIGINFO_NIL);
     }
 
